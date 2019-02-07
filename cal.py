@@ -87,11 +87,16 @@ def get_ics_events(files=None, remove_duplicates=True):
             if new_event.uid in events_dict:
                 continue
 
+            duplicate = False
             if remove_duplicates:
                 # check if duplicate of event already exists (has different uid though)
                 for _,existing_event in events_dict.items():
                     if new_event.start == existing_event.start and new_event.end == existing_event.end and new_event.summary == existing_event.summary:
-                        continue
+                        duplicate = True
+                        break
+
+            if duplicate:
+                continue
 
             # only add event uids that aren't duplicated
             events_dict[new_event.uid] = new_event
@@ -102,7 +107,7 @@ if __name__ == "__main__":
     # load the configuration file
     if os.path.exists('config.json'):
         import json
-        with open("config.json", "r") as f:
+        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.json"), "r") as f:
             config = json.loads(f.read())
     else:
         config = {}
