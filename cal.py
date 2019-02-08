@@ -104,10 +104,14 @@ def get_ics_events(files=None, remove_duplicates=True):
     return events_dict
 
 if __name__ == "__main__":
+    print("Starting:", datetime.datetime.now())
+
     # load the configuration file
-    if os.path.exists('config.json'):
+    path_to_config = os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.json")
+    print("Config location:", path_to_config)
+    if os.path.exists(path_to_config):
         import json
-        with open(os.path.join(os.path.dirname(os.path.realpath(__file__)), "config.json"), "r") as f:
+        with open(path_to_config, "r") as f:
             config = json.loads(f.read())
     else:
         config = {}
@@ -141,3 +145,7 @@ if __name__ == "__main__":
 
         # insert gcal event into the primary calendar
         result = service.events().insert(calendarId='primary', body=gcal_event).execute()
+    
+    print("Finished:", datetime.datetime.now())
+    print()
+    print()
