@@ -75,6 +75,16 @@ def generate_gcal_event(e):
     )
     return event
 
+def check_duplicate_event(event, previous_events):
+    duplicate = False
+    if previous_events is not None:
+        # TODO compare current event to existing events
+        for previous_event in previous_events.values():
+            if event.start == previous_event.start and event.end == previous_event.end and event.summary == previous_event.summary:
+                    duplicate = True
+                    break
+    return duplicate
+
 def get_ics_events(files=None, remove_duplicates=True):
     events_dict = {}
     for ics_file in tqdm(files, total=len(files)):
@@ -89,13 +99,9 @@ def get_ics_events(files=None, remove_duplicates=True):
             if new_event.uid in events_dict:
                 continue
 
-            duplicate = False
             if remove_duplicates:
                 # check if duplicate of event already exists (has different uid though)
-                for _,existing_event in events_dict.items():
-                    if new_event.start == existing_event.start and new_event.end == existing_event.end and new_event.summary == existing_event.summary:
-                        duplicate = True
-                        break
+                duplicate = check_duplicate_event(new_event, events_dict)
 
             if duplicate:
                 continue
@@ -128,28 +134,50 @@ if __name__ == "__main__":
 
     calendar_replace = config.get('calendar_replace', False)
 
-
-    # get the service object
-    service = get_gcal_service()
-
-    # clear the calendar
-    if calendar_replace:
-        print("Clearing your '{}' calendar!".format(calendarId))
-        service.calendars().clear(calendarId=calendarId).execute()
-
     # parse the ics files from path into an event dictionary (key values are UIDs)
     files = glob.glob(os.path.expanduser(os.path.expandvars(os.path.join(path,"*.ics"))))
 
     events = get_ics_events(files)
 
+    if os.path.exists(os.path.join(local_path, "cal.pickle")):
+        with open(os.path.join(local_path, "cal.pickle"), 'rb') as f:
+            previous_events = pickle.load(f)
+    else:
+        previous_events = None
+
+    gcal_events = []
+    any_new = False
     # loop through events
     for event in tqdm(events.values(), total=len(events)):
+
+        duplicate = check_duplicate_event(event, previous_events)
+
+        if not duplicate:
+            any_new = True
+
         # generate Google calendar event from ICS event
         gcal_event = generate_gcal_event(event)
 
         # insert gcal event into the primary calendar
-        result = service.events().insert(calendarId='primary', body=gcal_event).execute()
-    
+        gcal_events.append(gcal_event)
+
+    # clear and update calendar if changes
+    if any_new:
+        # get the service object
+        service = get_gcal_service()
+
+        # clear the calendar
+        if calendar_replace:
+            print("Clearing your '{}' calendar!".format(calendarId))
+            service.calendars().clear(calendarId=calendarId).execute()
+
+        for gcal_event in tqdm(gcal_events, total = len(gcal_events)):
+            result = service.events().insert(calendarId='primary', body=gcal_event).execute()
+
+    with open(os.path.join(local_path, "cal.pickle"), 'wb') as f:
+            pickle.dump(events, f, protocol=pickle.HIGHEST_PROTOCOL)
+
+
     print("Finished:", datetime.datetime.now())
     print()
     print()

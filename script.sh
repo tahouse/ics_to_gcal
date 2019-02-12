@@ -1,7 +1,9 @@
 #!/bin/bash
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
+
 export LANG="en_US.UTF-8"
 export LC_COLLATE="en_US.UTF-8"
+
+DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 echo $USER >> $DIR/out.log
 
 source /anaconda3/etc/profile.d/conda.sh

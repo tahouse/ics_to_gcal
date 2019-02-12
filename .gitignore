@@ -1,4 +1,4 @@
-token.pickle
+*.pickle
 .DS_Store
 .cache/
 .vscode/
