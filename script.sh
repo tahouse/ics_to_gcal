@@ -12,4 +12,4 @@ conda activate cal
 echo `which python` >> $DIR/out.log
 echo `python --version` >> $DIR/out.log
 
-python -u $DIR/cal.py 2>&1 | tee -a $DIR/out.log
+python -u $DIR/cal.py --cron 2>&1 | tee -a $DIR/out.log

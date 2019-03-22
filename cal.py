@@ -1,20 +1,42 @@
 #!/anaconda3/envs/cal/bin/python
 
+
+##TODO handle EXDATE! (Exception Dates -- remove from recurrance) 
+
+##TODO handle daylight savings crossings 
+##https://webis.helpshift.com/a/pocket-informant/?s=general&f=recurring-events-and-daylight-saving-time
+
 #%%
 import os
 import sys
 import glob
 import pickle
-
-from dateutil.tz import tzlocal
+import pytz
 import datetime
+
 from tqdm import tqdm
 
 from googleapiclient.discovery import build
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 
+sys.path.append("/Users/tahouse/git/python/icalevents")
 from icalevents.icalparser import parse_events
+# from icalevents.icalparser import parse_events
+
+import argparse
+
+
+tz = pytz.timezone('America/Los_Angeles')
+
+parser = argparse.ArgumentParser(description="Flip a switch by setting a flag")
+parser.add_argument('--cron', action='store_true')
+args = parser.parse_args()
+
+# if args.cron:
+#     print("Cron called!")
+# else:
+#     print("Manually run")
 
 local_path = os.path.dirname(os.path.realpath(__file__))
 
@@ -62,9 +84,18 @@ def generate_gcal_event(e):
         attendee = e.attendee
     except:
         attendee = "n/a"
-    
 
     e.description = e.description + "\n\nOrganizer:\n" + str(organizer) + "\n\nAttendees:\n" + str(attendee)
+
+    ## Fix timezone/Daylight savings issue
+    if str(e.start.tzinfo) == "tzutc()":
+        e.start = e.start.astimezone(pytz.utc)
+        e.end = e.end.astimezone(pytz.utc)
+    else:
+        tz = pytz.timezone(str(e.start.tzinfo))
+        e.start = tz.localize(e.start.replace(tzinfo=None))
+        e.end = tz.localize(e.end.replace(tzinfo=None))
+
     event = dict(
         summary= e.summary,
         description= e.description,
@@ -85,12 +116,26 @@ def check_duplicate_event(event, previous_events):
                     break
     return duplicate
 
-def get_ics_events(files=None, remove_duplicates=True):
+def check_duplicate_gcal_event(event, previous_events):
+    duplicate = False
+    if previous_events is not None:
+        # TODO compare current event to existing events
+        for previous_event in previous_events.values():
+            if event['start']   == previous_event['start']   and \
+               event['end']     == previous_event['end']     and \
+               event['summary'] == previous_event['summary'] :
+                duplicate = True
+                break
+    return duplicate
+
+
+def get_ics_events(files=None, remove_duplicates=True, days=30):
     events_dict = {}
     for ics_file in tqdm(files, total=len(files)):
+
         # open the file and parse ics calendar to list of events
         with open(ics_file) as f:
-            events_list = parse_events(f.read(), default_span=datetime.timedelta(days=30))
+            events_list = parse_events(f.read(), default_span=datetime.timedelta(days=days))
 
         # loop through all events in calendar
         for new_event in events_list:
@@ -106,6 +151,9 @@ def get_ics_events(files=None, remove_duplicates=True):
             if duplicate:
                 continue
 
+            # add file field
+            new_event.file = ics_file
+
             # only add event uids that aren't duplicated
             events_dict[new_event.uid] = new_event
 
@@ -115,7 +163,6 @@ if __name__ == "__main__":
     print("Starting:", datetime.datetime.now())
 
     # load the configuration file
-    # path_to_config = os.path.join(, "config.json")
     path_to_config = os.path.join(local_path, "config.json")
 
     print("Config location:", path_to_config)
@@ -138,31 +185,37 @@ if __name__ == "__main__":
     files = glob.glob(os.path.expanduser(os.path.expandvars(os.path.join(path,"*.ics"))))
 
     events = get_ics_events(files)
-
+    print("Got {} events from ics files".format(len(events)))
     if os.path.exists(os.path.join(local_path, "cal.pickle")):
         with open(os.path.join(local_path, "cal.pickle"), 'rb') as f:
             previous_events = pickle.load(f)
+            print("Got {} events from last export/save".format(len(previous_events)))
     else:
         previous_events = None
 
-    gcal_events = []
-    any_new = False
+    gcal_events = {}
+    # any_new = False
+
     # loop through events
     for event in tqdm(events.values(), total=len(events)):
-
-        duplicate = check_duplicate_event(event, previous_events)
-
-        if not duplicate:
-            any_new = True
 
         # generate Google calendar event from ICS event
         gcal_event = generate_gcal_event(event)
 
-        # insert gcal event into the primary calendar
-        gcal_events.append(gcal_event)
+        # duplicate = check_duplicate_gcal_event(gcal_event, previous_events)
+
+        # # insert gcal event into the primary calendar
+        # if not duplicate:
+        #     # any_new = True
+        #     # new_event_count += 1
+        #     # gcal_events.append(gcal_event)
+        gcal_events[gcal_event['uid']] = gcal_event
+
+    # raise Exception()
+    print("Found {} new events not in previous export".format(len(gcal_events)))
 
     # clear and update calendar if changes
-    if any_new:
+    if len(gcal_events) > 0:
         # get the service object
         service = get_gcal_service()
 
@@ -171,12 +224,12 @@ if __name__ == "__main__":
             print("Clearing your '{}' calendar!".format(calendarId))
             service.calendars().clear(calendarId=calendarId).execute()
 
-        for gcal_event in tqdm(gcal_events, total = len(gcal_events)):
+        for gcal_event in tqdm(gcal_events.values(), total = len(gcal_events)):
+            # print(gcal_event)
             result = service.events().insert(calendarId='primary', body=gcal_event).execute()
 
-    with open(os.path.join(local_path, "cal.pickle"), 'wb') as f:
-            pickle.dump(events, f, protocol=pickle.HIGHEST_PROTOCOL)
-
+        # with open(os.path.join(local_path, "cal.pickle"), 'wb') as f:
+        #     pickle.dump(gcal_events, f, protocol=pickle.HIGHEST_PROTOCOL)
 
     print("Finished:", datetime.datetime.now())
     print()
