@@ -88,6 +88,7 @@ def generate_gcal_event(e):
     e.description = e.description + "\n\nOrganizer:\n" + str(organizer) + "\n\nAttendees:\n" + str(attendee)
 
     ## Fix timezone/Daylight savings issue
+    ## TODO still not working super well
     if str(e.start.tzinfo) == "tzutc()":
         e.start = e.start.astimezone(pytz.utc)
         e.end = e.end.astimezone(pytz.utc)
@@ -96,6 +97,17 @@ def generate_gcal_event(e):
         e.start = tz.localize(e.start.replace(tzinfo=None))
         e.end = tz.localize(e.end.replace(tzinfo=None))
 
+    if e.status is None:
+        color = None
+    elif e.status == "TENTATIVE":
+        color = 5
+    elif e.status == "FREE":
+        color = 5
+    elif e.status == "BUSY":
+        color = 4
+    else:
+        color = None
+
     event = dict(
         summary= e.summary,
         description= e.description,
@@ -103,8 +115,61 @@ def generate_gcal_event(e):
         location= e.location,
         start = dict(dateTime = e.start.isoformat()),
         end = dict(dateTime = e.end.isoformat()),
+        colorId = color
     )
     return event
+
+
+def check_recurrence_id(event):
+    if event.recurrence_id is None:
+        return event.start.astimezone(pytz.utc)
+    else:
+        return event.recurrence_id.astimezone(pytz.utc)
+
+def check_modified_recurring_event(event, previous_events):
+    duplicate = False
+    if previous_events is not None:
+        for uid, previous_event in previous_events.items():
+            # recurring events generate underscored occurence vals: UUID_OCCURENCE
+            if previous_event.uid.split("_")[0] == event.uid.split("_")[0]:
+                # both recurrence_id are none so don't do anything
+                if previous_event.recurrence_id == event.recurrence_id == None:
+                    continue
+                
+                if check_recurrence_id(previous_event) == check_recurrence_id(event):
+                    # print("Found match!", previous_event, "&&", event)
+                    # given a UID, if same recurrence_id then sequence is final determiniation
+                    if previous_event.sequence is not None and event.sequence is not None:
+                        # print("Using sequence to determine which event to keep")
+                        if previous_event.sequence > event.sequence:
+                            #return previous event, no need to modifiy previous_events
+                            duplicate = True
+                            break
+                        else:
+                            # return current event
+                            duplicate = True
+                            previous_events.pop(key)
+                            previous_events[event.uid] = event
+                            break
+                    else:
+                        # print("At least one sequence is None, return one that isn't None unless both are.. then error")
+                        # print(previous_event.recurrence_id, previous_event.sequence, check_recurrence_id(previous_event))
+                        # print(event.recurrence_id, event.sequence, check_recurrence_id(event))
+                        # return the event with sequence that isn't None
+                        if previous_event.sequence is None:
+                            # return current event
+                            duplicate = True
+                            previous_events[event.uid] = event
+                            break
+                        elif event.sequence is None:
+                            #return previous event, no need to modifiy previous_events
+                            duplicate = True
+                            break
+                        else:
+                            # both are none??
+                            raise Exception("Recurring events with same UID, different recurrence_ids, but neither have a Sequence! Don't know what to do..")
+
+    return previous_events, duplicate
 
 def check_duplicate_event(event, previous_events):
     duplicate = False
@@ -112,8 +177,8 @@ def check_duplicate_event(event, previous_events):
         # TODO compare current event to existing events
         for previous_event in previous_events.values():
             if event.start == previous_event.start and event.end == previous_event.end and event.summary == previous_event.summary:
-                    duplicate = True
-                    break
+                duplicate = True
+                break
     return duplicate
 
 def check_duplicate_gcal_event(event, previous_events):
@@ -139,20 +204,28 @@ def get_ics_events(files=None, remove_duplicates=True, days=30):
 
         # loop through all events in calendar
         for new_event in events_list:
+            # add file field
+            new_event.file = ics_file
 
-            # conintue if uid already exists in dictionary
+            # if True: #"AWS Tech" in new_event.summary:
+            #     print()
+            #     print(new_event, new_event.file, new_event.status)
+                # print(dir(new_event))
+                # print(new_event.uid.split("_")[0])
+                # print(new_event.recurrence_id)
+
+            # continue if uid already exists in dictionary
             if new_event.uid in events_dict:
                 continue
 
             if remove_duplicates:
                 # check if duplicate of event already exists (has different uid though)
                 duplicate = check_duplicate_event(new_event, events_dict)
+            
+            events_dict, duplicate = check_modified_recurring_event(new_event, events_dict)
 
             if duplicate:
                 continue
-
-            # add file field
-            new_event.file = ics_file
 
             # only add event uids that aren't duplicated
             events_dict[new_event.uid] = new_event
