@@ -235,6 +235,7 @@ def get_ics_events(files=None, remove_duplicates=True, days=30):
 if __name__ == "__main__":
     print("Starting:", datetime.datetime.now())
 
+
     # load the configuration file
     path_to_config = os.path.join(local_path, "config.json")
 
