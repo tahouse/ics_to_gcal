@@ -75,7 +75,13 @@ def get_gcal_service():
     return service
 
 def generate_gcal_event(e):
-    e.description.replace("\n\n\n\n", "\n")
+    # if "Lunch" in e.summary:
+    #     print(e, dir(e), )
+    if e.description:
+        e.description.replace("\n\n\n\n", "\n")
+    else:
+        e.description = ""
+
     try:
         organizer = e.organizer
     except:
@@ -89,18 +95,18 @@ def generate_gcal_event(e):
 
     ## Fix timezone/Daylight savings issue
     ## TODO still not working super well
-    if str(e.start.tzinfo) == "tzutc()":
-        e.start = e.start.astimezone(pytz.utc)
-        e.end = e.end.astimezone(pytz.utc)
-    else:
-        tz = pytz.timezone(str(e.start.tzinfo))
-        e.start = tz.localize(e.start.replace(tzinfo=None))
-        e.end = tz.localize(e.end.replace(tzinfo=None))
+    # if str(e.start.tzinfo) == "tzutc()":
+    #     e.start = e.start.astimezone(pytz.utc)
+    #     e.end = e.end.astimezone(pytz.utc)
+    # else:
+    #     tz = pytz.timezone(str(e.start.tzinfo))
+    #     e.start = tz.localize(e.start.replace(tzinfo=None))
+    #     e.end = tz.localize(e.end.replace(tzinfo=None))
 
     if e.status is None:
         color = None
     elif e.status == "TENTATIVE":
-        color = 5
+        color = 3
     elif e.status == "FREE":
         color = 5
     elif e.status == "BUSY":
@@ -109,14 +115,31 @@ def generate_gcal_event(e):
         color = None
 
     event = dict(
-        summary= e.summary,
-        description= e.description,
-        uid = e.uid,
-        location= e.location,
-        start = dict(dateTime = e.start.isoformat()),
-        end = dict(dateTime = e.end.isoformat()),
-        colorId = color
+        summary     = e.summary,
+        location    = e.location,
+        description = e.description,
+        uid         = e.uid,
+        start       = dict(dateTime = e.start.isoformat()),
+        end         = dict(dateTime = e.end.isoformat()),
+        colorId     = color,
+        reminders   = {'useDefault': False}
     )
+
+    if len(e.alarms) > 0:
+        if color == 5:
+            pass
+            # print(e.summary, [alarm.total_seconds()/60 for alarm in e.alarms])
+            # print(e.file)
+            # event['reminders']['overrides']   = [ dict(
+            #                                     method = 'popup',
+            #                                     minutes = -alarm.total_seconds()/60 # assume alarm is BEFORE event, this will be weird otherwise
+            #                                     ) for alarm in e.alarms ]
+            #                     )
+        else:
+            event['reminders']['overrides']   = [ dict(
+                                                method = 'popup',
+                                                minutes = -alarm.total_seconds()/60 # assume alarm is BEFORE event, this will be weird otherwise
+                                                ) for alarm in e.alarms ]
     return event
 
 
@@ -199,20 +222,24 @@ def get_ics_events(files=None, remove_duplicates=True, days=30):
     for ics_file in tqdm(files, total=len(files)):
 
         # open the file and parse ics calendar to list of events
-        with open(ics_file) as f:
-            events_list = parse_events(f.read(), default_span=datetime.timedelta(days=days))
+        try:
+            with open(ics_file) as f:
+                events_list = parse_events(f.read(), default_span=datetime.timedelta(days=days))
+        except Exception as e:
+            print(ics_file)
+            raise e
 
         # loop through all events in calendar
         for new_event in events_list:
             # add file field
             new_event.file = ics_file
 
-            # if True: #"AWS Tech" in new_event.summary:
+            # if "Lunch" in new_event.summary:
             #     print()
             #     print(new_event, new_event.file, new_event.status)
-                # print(dir(new_event))
-                # print(new_event.uid.split("_")[0])
-                # print(new_event.recurrence_id)
+            #     print(dir(new_event))
+            #     print(new_event.uid.split("_")[0])
+            #     print(new_event.recurrence_id)
 
             # continue if uid already exists in dictionary
             if new_event.uid in events_dict:
@@ -273,8 +300,13 @@ if __name__ == "__main__":
     # loop through events
     for event in tqdm(events.values(), total=len(events)):
 
-        # generate Google calendar event from ICS event
-        gcal_event = generate_gcal_event(event)
+        try:
+            # generate Google calendar event from ICS event
+            gcal_event = generate_gcal_event(event)
+        except Exception as e:
+            print(event, event.file)
+            raise e
+
 
         # duplicate = check_duplicate_gcal_event(gcal_event, previous_events)
 
