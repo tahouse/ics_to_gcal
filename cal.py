@@ -32,12 +32,6 @@ tz = pytz.timezone('America/Los_Angeles')
 parser = argparse.ArgumentParser(description="Flip a switch by setting a flag")
 parser.add_argument('--cron', action='store_true')
 args = parser.parse_args()
-
-# if args.cron:
-#     print("Cron called!")
-# else:
-#     print("Manually run")
-
 local_path = os.path.dirname(os.path.realpath(__file__))
 
 def get_gcal_service():
@@ -69,7 +63,7 @@ def get_gcal_service():
         # Save the credentials for the next run
         with open(os.path.join(local_path, 'token.pickle'), 'wb') as token:
             pickle.dump(creds, token)
-
+    # print("Building Google calendar service..")
     service = build('calendar', 'v3', credentials=creds)
 
     return service
@@ -77,6 +71,8 @@ def get_gcal_service():
 def generate_gcal_event(e):
     # if "Lunch" in e.summary:
     #     print(e, dir(e), )
+
+    # reduce crazy whitespace
     if e.description:
         e.description.replace("\n\n\n\n", "\n")
     else:
@@ -91,7 +87,13 @@ def generate_gcal_event(e):
     except:
         attendee = "n/a"
 
-    e.description = e.description + "\n\nOrganizer:\n" + str(organizer) + "\n\nAttendees:\n" + str(attendee)
+    e.description = e.description + "\nOrganizer:\n" + str(organizer) + "\nAttendees:\n" + str(attendee)
+
+    # reduce crazy whitespace
+    if e.description:
+        e.description.replace("\n\n", "\n")
+    else:
+        e.description = ""
 
     ## Fix timezone/Daylight savings issue
     ## TODO still not working super well
@@ -103,26 +105,33 @@ def generate_gcal_event(e):
     #     e.start = tz.localize(e.start.replace(tzinfo=None))
     #     e.end = tz.localize(e.end.replace(tzinfo=None))
 
+    # print(e.status)
     if e.status is None:
         color = None
+        transparency = "opaque"
     elif e.status == "TENTATIVE":
         color = 3
+        transparency = "opaque"
     elif e.status == "FREE":
         color = 5
+        transparency = "transparent"
     elif e.status == "BUSY":
         color = 4
+        transparency = "opaque"
     else:
         color = None
+        transparency = "opaque"
 
     event = dict(
-        summary     = e.summary,
-        location    = e.location,
-        description = e.description,
-        uid         = e.uid,
-        start       = dict(dateTime = e.start.isoformat()),
-        end         = dict(dateTime = e.end.isoformat()),
-        colorId     = color,
-        reminders   = {'useDefault': False}
+        summary         = e.summary,
+        location        = e.location,
+        description     = e.description,
+        uid             = e.uid,
+        start           = dict(dateTime = e.start.isoformat()),
+        end             = dict(dateTime = e.end.isoformat()),
+        colorId         = color,
+        transparency    = transparency,
+        reminders       = {'useDefault': False}
     )
 
     if len(e.alarms) > 0:
@@ -141,7 +150,6 @@ def generate_gcal_event(e):
                                                 minutes = -alarm.total_seconds()/60 # assume alarm is BEFORE event, this will be weird otherwise
                                                 ) for alarm in e.alarms ]
     return event
-
 
 def check_recurrence_id(event):
     if event.recurrence_id is None:
@@ -216,10 +224,9 @@ def check_duplicate_gcal_event(event, previous_events):
                 break
     return duplicate
 
-
 def get_ics_events(files=None, remove_duplicates=True, days=30):
     events_dict = {}
-    for ics_file in tqdm(files, total=len(files)):
+    for ics_file in tqdm(files, total=len(files), desc=" Loading events from ics files"):
 
         # open the file and parse ics calendar to list of events
         try:
@@ -262,7 +269,6 @@ def get_ics_events(files=None, remove_duplicates=True, days=30):
 if __name__ == "__main__":
     print("Starting:", datetime.datetime.now())
 
-
     # load the configuration file
     path_to_config = os.path.join(local_path, "config.json")
 
@@ -287,18 +293,18 @@ if __name__ == "__main__":
 
     events = get_ics_events(files)
     print("Got {} events from ics files".format(len(events)))
-    if os.path.exists(os.path.join(local_path, "cal.pickle")):
-        with open(os.path.join(local_path, "cal.pickle"), 'rb') as f:
-            previous_events = pickle.load(f)
-            print("Got {} events from last export/save".format(len(previous_events)))
-    else:
-        previous_events = None
+    # if os.path.exists(os.path.join(local_path, "cal.pickle")):
+    #     with open(os.path.join(local_path, "cal.pickle"), 'rb') as f:
+    #         previous_events = pickle.load(f)
+    #         print("Got {} events from last export/save".format(len(previous_events)))
+    # else:
+    #     previous_events = None
 
     gcal_events = {}
     # any_new = False
 
     # loop through events
-    for event in tqdm(events.values(), total=len(events)):
+    for event in tqdm(events.values(), total=len(events), desc=" Converting events to gcal"):
 
         try:
             # generate Google calendar event from ICS event
@@ -306,7 +312,6 @@ if __name__ == "__main__":
         except Exception as e:
             print(event, event.file)
             raise e
-
 
         # duplicate = check_duplicate_gcal_event(gcal_event, previous_events)
 
@@ -318,21 +323,45 @@ if __name__ == "__main__":
         gcal_events[gcal_event['uid']] = gcal_event
 
     # raise Exception()
-    print("Found {} new events not in previous export".format(len(gcal_events)))
+    # print("Found {} new events not in previous export".format(len(gcal_events)))
 
     # clear and update calendar if changes
     if len(gcal_events) > 0:
         # get the service object
         service = get_gcal_service()
 
-        # clear the calendar
-        if calendar_replace:
-            print("Clearing your '{}' calendar!".format(calendarId))
-            service.calendars().clear(calendarId=calendarId).execute()
+        # # clear the calendar
+        # if calendar_replace:
+        #     print("Clearing your '{}' calendar!".format(calendarId))
+        #     service.calendars().clear(calendarId=calendarId).execute()
 
-        for gcal_event in tqdm(gcal_events.values(), total = len(gcal_events)):
+        # res = service.calendarList().list().execute()
+        # temps = [cal['id'] for cal in res['items'] if cal['summary'] == 'temp']
+        # print(temps)
+        # [service.calendars().delete(calendarId=temp).execute() for temp in temps]
+
+        # service.calendars().delete(calendarId='primary').execute()
+
+        page_token = None
+        to_be_deleted = []
+        print("Downloading previous events from google calendar '{}'".format(calendarId), end='', flush=True)
+        while True:
+            old_events = service.events().list(calendarId=calendarId, maxResults=2500, showDeleted=False, pageToken=page_token).execute()
+            # print(prev_events)
+            # print([e['summary'] for e in old_events['items']])
+            to_be_deleted.extend(old_events['items'])
+            page_token = old_events.get('nextPageToken')
+            print('.', end='', flush=True)
+            if not page_token:
+                break
+        print()
+        for gcal_event in tqdm(gcal_events.values(), total = len(gcal_events), desc=" Submitting new events"):
             # print(gcal_event)
             result = service.events().insert(calendarId='primary', body=gcal_event).execute()
+
+        # print("Deleting previous events")
+        for event in tqdm(to_be_deleted, desc=" Deleting old events"):
+            result = service.events().delete(calendarId='primary', eventId=event['id']).execute()
 
         # with open(os.path.join(local_path, "cal.pickle"), 'wb') as f:
         #     pickle.dump(gcal_events, f, protocol=pickle.HIGHEST_PROTOCOL)
